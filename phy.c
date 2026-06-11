@@ -2253,13 +2253,51 @@ err:
 }
 #endif
 
+/*
+ * Compute the per-rate-section offset cap corresponding to the user's
+ * target output power. Mirrors rtw_sar_to_phy(): converts the user's
+ * requested dBm (stored as mBm) into 0.25-dBm SAR coordinate system,
+ * then returns an offset relative to the rate-section base that acts
+ * as a cap when applied via min().
+ *
+ * Returns max_power_index (no effective cap) if no user request is active.
+ */
+static s8 rtw_phy_get_user_tx_power_limit(struct rtw_dev *rtwdev, u8 band,
+					   u8 path, u8 rs)
+{
+	struct rtw_hal *hal = &rtwdev->hal;
+	s8 base, max;
+	s32 sar_units, tmp;
+	u8 txgi, fct;
+
+	if (!hal->txpwr_user_requested)
+		return (s8)rtwdev->chip->max_power_index;
+
+	if (rs >= RTW_RATE_SECTION_NUM)
+		return (s8)rtwdev->chip->max_power_index;
+
+	/* 250 mBm = 0.25 dBm = 1 SAR unit (RTW_COMMON_SAR_FCT = 2) */
+	sar_units = hal->txpwr_user_target_mbm / 250;
+	txgi = rtwdev->chip->txgi_factor;
+	fct = 2;
+	max = (s8)rtwdev->chip->max_power_index;
+
+	tmp = fct > txgi ? sar_units >> (fct - txgi) : sar_units << (txgi - fct);
+
+	base = band == PHY_BAND_2G ?
+	       hal->tx_pwr_by_rate_base_2g[path][rs] :
+	       hal->tx_pwr_by_rate_base_5g[path][rs];
+
+	return (s8)clamp_t(s32, tmp, -max - 1, max) - base;
+}
+
 void rtw_get_tx_power_params(struct rtw_dev *rtwdev, u8 path, u8 rate, u8 bw,
 			     u8 ch, u8 regd, struct rtw_power_params *pwr_param)
 {
 	struct rtw_hal *hal = &rtwdev->hal;
 	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
 	struct rtw_txpwr_idx *pwr_idx;
-	u8 group, band;
+	u8 group, band, rs;
 	u8 *base = &pwr_param->pwr_base;
 	s8 *offset = &pwr_param->pwr_offset;
 	s8 *limit = &pwr_param->pwr_limit;
@@ -2267,6 +2305,7 @@ void rtw_get_tx_power_params(struct rtw_dev *rtwdev, u8 path, u8 rate, u8 bw,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 	s8 *sar = &pwr_param->pwr_sar;
 #endif
+	s8 *user = &pwr_param->pwr_user;
 
 	pwr_idx = &rtwdev->efuse.txpwr_idx_table[path];
 	group = rtw_get_channel_group(ch, rate);
@@ -2293,6 +2332,8 @@ void rtw_get_tx_power_params(struct rtw_dev *rtwdev, u8 path, u8 rate, u8 bw,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 	*sar = rtw_phy_get_tx_power_sar(rtwdev, hal->sar_band, path, rate);
 #endif
+	rs = rtw_phy_rate_to_rate_section(rate);
+	*user = rtw_phy_get_user_tx_power_limit(rtwdev, band, path, rs);
 }
 
 u8
@@ -2310,6 +2351,13 @@ rtw_phy_get_tx_power_index(struct rtw_dev *rtwdev, u8 rf_path, u8 rate,
 	offset = min3(pwr_param.pwr_offset,
 		      pwr_param.pwr_limit,
 		      pwr_param.pwr_sar);
+	offset = min(offset, pwr_param.pwr_user);
+
+	if (rf_path == 0 && rate == DESC_RATE6M)
+		rtwdev->hal.txpwr_user_is_limiting =
+			pwr_param.pwr_user <= min3(pwr_param.pwr_offset,
+						    pwr_param.pwr_limit,
+						    pwr_param.pwr_sar);
 
 	if (rtwdev->chip->en_dis_dpd)
 		offset += rtw_phy_get_dis_dpd_by_rate_diff(rtwdev, rate);
