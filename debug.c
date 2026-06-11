@@ -706,8 +706,8 @@ static int rtw_debugfs_get_tx_pwr_tbl(struct seq_file *m, void *v)
 	seq_printf(m, "channel: %u\n", ch);
 	seq_printf(m, "bandwidth: %u\n", bw);
 	seq_printf(m, "regulatory: %s\n", rtw_get_regd_string(regd));
-	seq_printf(m, "%-4s %-10s %-9s %-9s (%-4s %-4s %-4s) %-4s\n",
-		   "path", "rate", "pwr", "base", "byr", "lmt", "sar", "rem");
+	seq_printf(m, "%-4s %-10s %-9s %-9s (%-4s %-4s %-4s %-4s) %-4s\n",
+		   "path", "rate", "pwr", "base", "byr", "lmt", "sar", "usr", "rem");
 
 	max_ht_rate = DESC_RATEMCS0 + nss * 8 - 1;
 
@@ -733,15 +733,16 @@ static int rtw_debugfs_get_tx_pwr_tbl(struct seq_file *m, void *v)
 
 			seq_printf(m, "%4c ", path + 'A');
 			rtw_print_rate(m, rate);
-			seq_printf(m, " %3u(0x%02x) %4u %4d (%4d %4d %4d) %4d\n",
+			seq_printf(m, " %3u(0x%02x) %4u %4d (%4d %4d %4d %4d) %4d\n",
 				   hal->tx_pwr_tbl[path][rate],
 				   hal->tx_pwr_tbl[path][rate],
 				   pwr_param.pwr_base,
-				   min3(pwr_param.pwr_offset,
-					pwr_param.pwr_limit,
-					pwr_param.pwr_sar),
+				   min(min(min(pwr_param.pwr_offset,
+					       pwr_param.pwr_limit),
+					       pwr_param.pwr_sar),
+					       pwr_param.pwr_user),
 				   pwr_param.pwr_offset, pwr_param.pwr_limit,
-				   pwr_param.pwr_sar,
+				   pwr_param.pwr_sar, pwr_param.pwr_user,
 				   pwr_param.pwr_remnant);
 		}
 	}

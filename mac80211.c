@@ -13,6 +13,7 @@
 #include "bf.h"
 #include "debug.h"
 #include "wow.h"
+#include "phy.h"
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 #include "sar.h"
 #endif
@@ -77,6 +78,30 @@ static void rtw_ops_stop(struct ieee80211_hw *hw, bool suspend)
 	mutex_unlock(&rtwdev->mutex);
 }
 
+/*
+ * Apply a txpower configuration from mac80211.
+ * Must be called with rtwdev->mutex held.
+ *
+ * @type:  NL80211_TX_POWER_FIXED  = user requested a specific power
+ *         other                   = system default (regulatory ceiling)
+ * @dbm:   target power in dBm
+ */
+static void rtw_set_tx_power(struct rtw_dev *rtwdev,
+			      enum nl80211_tx_power_setting type, int dbm)
+{
+	struct rtw_hal *hal = &rtwdev->hal;
+
+	hal->txpwr_user_requested = (type == NL80211_TX_POWER_FIXED);
+	hal->txpwr_user_target_mbm = dbm * 1000;
+
+	if (!hal->txpwr_user_requested) {
+		hal->txpwr_ceiling_dbm = dbm;
+		hal->txpwr_ceiling_set = true;
+	}
+
+	rtw_phy_set_tx_power_level(rtwdev, hal->current_channel);
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
 static int rtw_ops_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
 #else
@@ -104,6 +129,12 @@ static int rtw_ops_config(struct ieee80211_hw *hw, u32 changed)
 
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL)
 		rtw_set_channel(rtwdev);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)
+	if (changed & IEEE80211_CONF_CHANGE_POWER)
+		rtw_set_tx_power(rtwdev, NL80211_TX_POWER_FIXED,
+				 hw->conf.power_level);
+#endif
 
 	if ((changed & IEEE80211_CONF_CHANGE_IDLE) &&
 	    (hw->conf.flags & IEEE80211_CONF_IDLE) &&
@@ -480,6 +511,11 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 
 	if (changed & BSS_CHANGED_PS)
 		rtw_recalc_lps(rtwdev, NULL);
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0))
+	if (changed & BSS_CHANGED_TXPOWER)
+		rtw_set_tx_power(rtwdev, conf->txpower_type, conf->txpower);
+#endif
 
 	rtw_vif_port_config(rtwdev, rtwvif, config);
 
@@ -1014,6 +1050,63 @@ static int rtw_ops_set_sar_specs(struct ieee80211_hw *hw,
 }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)
+static int rtw_ops_set_txpower(struct ieee80211_hw *hw,
+			       struct ieee80211_vif *vif,
+			       enum nl80211_tx_power_setting type,
+			       int mbm)
+{
+	struct rtw_dev *rtwdev = hw->priv;
+
+	mutex_lock(&rtwdev->mutex);
+
+	rtw_set_tx_power(rtwdev, type, mbm / 1000);
+
+	mutex_unlock(&rtwdev->mutex);
+
+	return 0;
+}
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+static int rtw_ops_get_txpower(struct ieee80211_hw *hw,
+			       struct ieee80211_vif *vif,
+			       unsigned int link_id,
+			       int *dbm)
+#else
+static int rtw_ops_get_txpower(struct ieee80211_hw *hw,
+			       struct ieee80211_vif *vif,
+			       int *dbm)
+#endif
+{
+	struct rtw_dev *rtwdev = hw->priv;
+	struct rtw_hal *hal = &rtwdev->hal;
+
+	if (hal->txpwr_user_requested && hal->txpwr_user_is_limiting) {
+		/*
+		 * User set fixed power and this is the binding constraint.
+		 * The hardware PA gain index has been reduced accordingly.
+		 */
+		*dbm = hal->txpwr_user_target_mbm / 1000;
+	} else if (hal->txpwr_ceiling_set) {
+		/*
+		 * User is not actively limiting power (auto, or set above
+		 * regulatory ceiling). Report the known ceiling instead of
+		 * the raw chip-index approximation which overestimates.
+		 */
+		*dbm = hal->txpwr_ceiling_dbm;
+	} else {
+		/*
+		 * Fallback: no ceiling cached yet (e.g. boot before first
+		 * BSS_CHANGED_TXPOWER). Use the crude chip-index estimate.
+		 */
+		*dbm = hal->tx_pwr_tbl[0][DESC_RATE6M] >>
+		       rtwdev->chip->txgi_factor;
+	}
+
+	return 0;
+}
+
 static void rtw_ops_sta_rc_update(struct ieee80211_hw *hw,
 				  struct ieee80211_vif *vif,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
@@ -1081,6 +1174,10 @@ const struct ieee80211_ops rtw_ops = {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 	.set_sar_specs          = rtw_ops_set_sar_specs,
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)
+	.set_txpower		= rtw_ops_set_txpower,
+#endif
+	.get_txpower		= rtw_ops_get_txpower,
 #ifdef CONFIG_PM
 	.suspend		= rtw_ops_suspend,
 	.resume			= rtw_ops_resume,

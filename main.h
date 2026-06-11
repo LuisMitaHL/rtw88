@@ -2172,6 +2172,14 @@ struct rtw_hal {
 	enum rtw_sar_bands sar_band;
 	struct rtw_sar sar;
 
+	/* ---- TX power control ---- */
+	bool txpwr_user_requested;    /* NL80211_TX_POWER_FIXED was set by user */
+	s32  txpwr_user_target_mbm;   /* target power in milli-dBm */
+	bool txpwr_user_is_limiting;  /* user cap is the binding offset in min() */
+	bool txpwr_ceiling_set;       /* false until first auto/LIMITED notification */
+	int  txpwr_ceiling_dbm;       /* best-known ceiling (reg max from auto/LIMITED) */
+	/* --------------------------- */
+
 	/* for 8821c set channel */
 	u32 ch_param[3];
 };
