@@ -8,6 +8,10 @@
 #include "ps.h"
 #include "debug.h"
 
+/* forward declaration needed by rtw_tx_report_enqueue */
+static void rtw_tx_report_tx_status(struct rtw_dev *rtwdev,
+				    struct sk_buff *skb, bool acked);
+
 static
 void rtw_tx_stats(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 		  struct sk_buff *skb)
@@ -230,10 +234,31 @@ void rtw_tx_report_enqueue(struct rtw_dev *rtwdev, struct sk_buff *skb, u8 sn)
 	*drv_data = sn;
 
 	spin_lock_irqsave(&tx_report->q_lock, flags);
+
+	/*
+	 * If the pending queue exceeds a reasonable size, process this skb
+	 * directly as acked instead of queuing. Prevents unbounded growth
+	 * under extreme TX load when C2H reports are delayed.
+	 */
+	if (skb_queue_len(&tx_report->queue) >= RTW_TX_REPORT_QLEN_MAX) {
+		spin_unlock_irqrestore(&tx_report->q_lock, flags);
+		rtw_warn(rtwdev, "TX report queue full, skipping\n");
+		rtw_tx_report_tx_status(rtwdev, skb, true);
+		return;
+	}
+
 	__skb_queue_tail(&tx_report->queue, skb);
 	spin_unlock_irqrestore(&tx_report->q_lock, flags);
 
-	mod_timer(&tx_report->purge_timer, jiffies + RTW_TX_PROBE_TIMEOUT);
+	/*
+	 * Arm (or re-arm) the purge timer. By checking timer_pending() we
+	 * avoid pushing the expiry forward on every single enqueue. Without
+	 * this guard, continuous TX keeps resetting the timer and it never
+	 * fires — the queue grows unbounded. With the guard, the timer fires
+	 * 500ms after the *first* enqueue, bounding queue size.
+	 */
+	if (!timer_pending(&tx_report->purge_timer))
+		mod_timer(&tx_report->purge_timer, jiffies + RTW_TX_PROBE_TIMEOUT);
 }
 EXPORT_SYMBOL(rtw_tx_report_enqueue);
 
