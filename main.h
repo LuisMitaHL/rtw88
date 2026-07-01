@@ -36,7 +36,9 @@
 #define RHEL_RELEASE_VERSION(a, b) a<<8 & b
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
+#define OPENWRT
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0) && !defined(OPENWRT)
 /* Taken from kernel 6.18.1: include/linux/device/devres.h
  * Removed size_dup(...) to support kernels older than 5.15. */
 static inline void *devm_kmemdup_array(struct device *dev, const void *src,
@@ -1028,7 +1030,7 @@ struct rtw_chip_ops {
 	int (*rsvd_page_dump)(struct rtw_dev *rtwdev, u8 *buf, u32 offset,
 			      u32 size);
 	int (*set_antenna)(struct rtw_dev *rtwdev,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 			   int radio_idx,
 #endif
 			   u32 antenna_tx,

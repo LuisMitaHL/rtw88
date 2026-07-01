@@ -986,7 +986,7 @@ static bool rtw8822b_check_rf_path(u8 antenna)
 }
 
 static int rtw8822b_set_antenna(struct rtw_dev *rtwdev,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 				int radio_idx,
 #endif
 				u32 antenna_tx,

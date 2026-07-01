@@ -482,13 +482,13 @@ static void rtw_usb_tx_handler(struct work_struct *work)
 
 static void rtw_usb_tx_queue_purge(struct rtw_usb *rtwusb)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0) || defined(OPENWRT)
 	struct rtw_dev *rtwdev = rtwusb->rtwdev;
 #endif
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(rtwusb->tx_queue); i++)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0) || defined(OPENWRT)
 		ieee80211_purge_tx_queue(rtwdev->hw, &rtwusb->tx_queue[i]);
 #else
 		skb_queue_purge(&rtwusb->tx_queue[i]);
@@ -1074,11 +1074,11 @@ static void rtw_usb_deinit_tx(struct rtw_dev *rtwdev)
 {
 	struct rtw_usb *rtwusb = rtw_get_usb_priv(rtwdev);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0) && !defined(OPENWRT)
 	rtw_usb_tx_queue_purge(rtwusb);
 #endif
 	destroy_workqueue(rtwusb->txwq);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0) || defined(OPENWRT)
 	rtw_usb_tx_queue_purge(rtwusb);
 #endif
 }

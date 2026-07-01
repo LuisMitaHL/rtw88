@@ -1317,7 +1317,7 @@ static void rtw_sdio_deinit_tx(struct rtw_dev *rtwdev)
 	struct rtw_sdio *rtwsdio = (struct rtw_sdio *)rtwdev->priv;
 	int i;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0) && !defined(OPENWRT)
 	for (i = 0; i < RTK_MAX_TX_QUEUE_NUM; i++)
 		skb_queue_purge(&rtwsdio->tx_queue[i]);
 #endif
@@ -1325,7 +1325,7 @@ static void rtw_sdio_deinit_tx(struct rtw_dev *rtwdev)
 	destroy_workqueue(rtwsdio->txwq);
 	kfree(rtwsdio->tx_handler_data);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0) || defined(OPENWRT)
 	for (i = 0; i < RTK_MAX_TX_QUEUE_NUM; i++)
 		ieee80211_purge_tx_queue(rtwdev->hw, &rtwsdio->tx_queue[i]);
 #endif

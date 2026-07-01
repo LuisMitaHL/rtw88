@@ -2770,7 +2770,7 @@ static void rtw8822c_set_tx_power_index(struct rtw_dev *rtwdev)
 }
 
 static int rtw8822c_set_antenna(struct rtw_dev *rtwdev,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 				int radio_idx,
 #endif
 				u32 antenna_tx,

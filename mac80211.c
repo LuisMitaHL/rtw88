@@ -77,7 +77,7 @@ static void rtw_ops_stop(struct ieee80211_hw *hw, bool suspend)
 	mutex_unlock(&rtwdev->mutex);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 static int rtw_ops_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
 #else
 static int rtw_ops_config(struct ieee80211_hw *hw, u32 changed)
@@ -776,7 +776,7 @@ static void rtw_ops_mgd_prepare_tx(struct ieee80211_hw *hw,
 	mutex_unlock(&rtwdev->mutex);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 static int rtw_ops_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
 				     u32 value)
 #else
@@ -871,7 +871,7 @@ static int rtw_ops_set_bitrate_mask(struct ieee80211_hw *hw,
 
 
 static int rtw_ops_set_antenna(struct ieee80211_hw *hw,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 			       int radio_idx,
 #endif
 			       u32 tx_antenna,
@@ -885,7 +885,7 @@ static int rtw_ops_set_antenna(struct ieee80211_hw *hw,
 		return -EOPNOTSUPP;
 
 	mutex_lock(&rtwdev->mutex);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 	ret = chip->ops->set_antenna(rtwdev, -1, tx_antenna, rx_antenna);
 #else
 	ret = chip->ops->set_antenna(rtwdev, tx_antenna, rx_antenna);
@@ -896,7 +896,7 @@ static int rtw_ops_set_antenna(struct ieee80211_hw *hw,
 }
 
 static int rtw_ops_get_antenna(struct ieee80211_hw *hw,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0) || defined(OPENWRT)
 			       int radio_idx,
 #endif
 			       u32 *tx_antenna,
@@ -1016,14 +1016,14 @@ static int rtw_ops_set_sar_specs(struct ieee80211_hw *hw,
 
 static void rtw_ops_sta_rc_update(struct ieee80211_hw *hw,
 				  struct ieee80211_vif *vif,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0) && !defined(OPENWRT)
 				  struct ieee80211_sta *sta, u32 changed)
 #else
 				  struct ieee80211_link_sta *link_sta,
 				  u32 changed)
 #endif
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0) || defined(OPENWRT)
 	struct ieee80211_sta *sta = link_sta->sta;
 #endif
 	struct rtw_dev *rtwdev = hw->priv;
@@ -1073,7 +1073,7 @@ const struct ieee80211_ops rtw_ops = {
 	.reconfig_complete	= rtw_reconfig_complete,
 	.hw_scan		= rtw_ops_hw_scan,
 	.cancel_hw_scan		= rtw_ops_cancel_hw_scan,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0) && !defined(OPENWRT)
 	.sta_rc_update		= rtw_ops_sta_rc_update,
 #else
 	.link_sta_rc_update	= rtw_ops_sta_rc_update,
