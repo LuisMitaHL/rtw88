@@ -219,24 +219,6 @@ void rtw_tx_report_purge_timer(void *cntx)
 	spin_unlock_irqrestore(&tx_report->q_lock, flags);
 }
 
-void rtw_tx_report_enqueue(struct rtw_dev *rtwdev, struct sk_buff *skb, u8 sn)
-{
-	struct rtw_tx_report *tx_report = &rtwdev->tx_report;
-	unsigned long flags;
-	u8 *drv_data;
-
-	/* pass sn to tx report handler through driver data */
-	drv_data = (u8 *)IEEE80211_SKB_CB(skb)->status.status_driver_data;
-	*drv_data = sn;
-
-	spin_lock_irqsave(&tx_report->q_lock, flags);
-	__skb_queue_tail(&tx_report->queue, skb);
-	spin_unlock_irqrestore(&tx_report->q_lock, flags);
-
-	mod_timer(&tx_report->purge_timer, jiffies + RTW_TX_PROBE_TIMEOUT);
-}
-EXPORT_SYMBOL(rtw_tx_report_enqueue);
-
 static void rtw_tx_report_tx_status(struct rtw_dev *rtwdev,
 				    struct sk_buff *skb, bool acked)
 {
@@ -251,6 +233,42 @@ static void rtw_tx_report_tx_status(struct rtw_dev *rtwdev,
 
 	ieee80211_tx_status_irqsafe(rtwdev->hw, skb);
 }
+
+void rtw_tx_report_enqueue(struct rtw_dev *rtwdev, struct sk_buff *skb, u8 sn)
+{
+	struct rtw_tx_report *tx_report = &rtwdev->tx_report;
+	unsigned long flags;
+	u8 *drv_data;
+
+	/* pass sn to tx report handler through driver data */
+	drv_data = (u8 *)IEEE80211_SKB_CB(skb)->status.status_driver_data;
+	*drv_data = sn;
+
+	spin_lock_irqsave(&tx_report->q_lock, flags);
+
+	/* When the queue is full, report the skb as acked immediately
+	 * instead of queuing it.  This prevents the queue from growing
+	 * without bound under heavy load when C2H reports are delayed.
+	 */
+	if (skb_queue_len(&tx_report->queue) >= RTW_TX_REPORT_QLEN_MAX) {
+		spin_unlock_irqrestore(&tx_report->q_lock, flags);
+		rtw_tx_report_tx_status(rtwdev, skb, true);
+		return;
+	}
+
+	__skb_queue_tail(&tx_report->queue, skb);
+	spin_unlock_irqrestore(&tx_report->q_lock, flags);
+
+	/* Arm the purge timer.  Checking timer_pending() avoids pushing
+	 * the expiry forward on every single enqueue, which would prevent
+	 * the timer from ever firing.  With the guard the timer fires
+	 * 500 ms after the first enqueue, bounding the queue to ~500 ms
+	 * worth of TX completions.
+	 */
+	if (!timer_pending(&tx_report->purge_timer))
+		mod_timer(&tx_report->purge_timer, jiffies + RTW_TX_PROBE_TIMEOUT);
+}
+EXPORT_SYMBOL(rtw_tx_report_enqueue);
 
 void rtw_tx_report_handle(struct rtw_dev *rtwdev, struct sk_buff *skb, int src)
 {
@@ -654,6 +672,7 @@ static int rtw_txq_push_skb(struct rtw_dev *rtwdev,
 	ret = rtw_hci_tx_write(rtwdev, &pkt_info, skb);
 	if (ret) {
 		rtw_err(rtwdev, "failed to write TX skb to HCI\n");
+		ieee80211_free_txskb(rtwdev->hw, skb);
 		return ret;
 	}
 	return 0;

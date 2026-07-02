@@ -41,6 +41,7 @@
 #define RTW_USB_RX_SKB_NUM		8
 
 #define RTW_USB_EP_MAX			4
+#define RTW_USB_TX_QUEUE_MAX		1024
 
 #define TX_DESC_QSEL_MAX		20
 
@@ -82,6 +83,7 @@ struct rtw_usb {
 
 	struct sk_buff_head tx_queue[RTW_USB_EP_MAX];
 	struct work_struct tx_work;
+	bool tx_stopped;
 
 	struct rx_usb_ctrl_block rx_cb[RTW_USB_RXCB_NUM];
 	struct sk_buff_head rx_queue;

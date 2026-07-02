@@ -377,6 +377,10 @@ void rtw_fw_c2h_cmd_rx_irqsafe(struct rtw_dev *rtwdev, u32 pkt_offset,
 	default:
 		/* pass offset for further operation */
 		*((u32 *)skb->cb) = pkt_offset;
+		if (skb_queue_len(&rtwdev->c2h_queue) >= 512) {
+			dev_kfree_skb_any(skb);
+			break;
+		}
 		skb_queue_tail(&rtwdev->c2h_queue, skb);
 		ieee80211_queue_work(rtwdev->hw, &rtwdev->c2h_work);
 		break;

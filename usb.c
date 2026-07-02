@@ -460,7 +460,13 @@ queue:
 	tx_desc = (struct rtw_tx_desc *)skb_head->data;
 	qsel = le32_get_bits(tx_desc->w1, RTW_TX_DESC_W1_QSEL);
 
-	rtw_usb_write_port(rtwdev, qsel, skb_head, rtw_usb_write_port_tx_complete, txcb);
+	if (rtw_usb_write_port(rtwdev, qsel, skb_head,
+			       rtw_usb_write_port_tx_complete, txcb)) {
+		rtw_warn(rtwdev, "failed to submit TX URB\n");
+		skb_queue_purge(&txcb->tx_ack_queue);
+		kfree(txcb);
+		return false;
+	}
 
 	return true;
 }
@@ -468,7 +474,9 @@ queue:
 static void rtw_usb_tx_handler(struct work_struct *work)
 {
 	struct rtw_usb *rtwusb = container_of(work, struct rtw_usb, tx_work);
+	struct rtw_dev *rtwdev = rtwusb->rtwdev;
 	int i, limit;
+	bool pending = false;
 
 	for (i = ARRAY_SIZE(rtwusb->tx_queue) - 1; i >= 0; i--) {
 		for (limit = 0; limit < 200; limit++) {
@@ -477,7 +485,38 @@ static void rtw_usb_tx_handler(struct work_struct *work)
 			if (!rtw_usb_tx_agg_skb(rtwusb, list))
 				break;
 		}
+		if (!skb_queue_empty(&rtwusb->tx_queue[i]))
+			pending = true;
 	}
+
+	/* If all endpoint queues have drained below the low-water mark
+	 * (RTW_USB_TX_QUEUE_MAX / 2), wake the mac80211 TX queues that
+	 * we stopped in rtw_usb_tx_write().
+	 */
+	if (rtwusb->tx_stopped) {
+		bool all_drained = true;
+
+		for (i = 0; i < ARRAY_SIZE(rtwusb->tx_queue); i++) {
+			if (skb_queue_len(&rtwusb->tx_queue[i]) > RTW_USB_TX_QUEUE_MAX / 2) {
+				all_drained = false;
+				break;
+			}
+		}
+		if (all_drained) {
+			int ac;
+
+			for (ac = 0; ac < IEEE80211_NUM_ACS; ac++)
+				ieee80211_wake_queue(rtwdev->hw, ac);
+			rtwusb->tx_stopped = false;
+		}
+	}
+
+	/* If the handler exhausted its iteration budget before draining
+	 * the queues, reschedule it so that the backlog is processed
+	 * even while mac80211 is stopped.
+	 */
+	if (pending)
+		queue_work(rtwusb->txwq, &rtwusb->tx_work);
 }
 
 static void rtw_usb_tx_queue_purge(struct rtw_usb *rtwusb)
@@ -596,6 +635,24 @@ static int rtw_usb_tx_write(struct rtw_dev *rtwdev,
 	rtw_tx_fill_txdesc_checksum(rtwdev, pkt_info, pkt_desc);
 	tx_data = rtw_usb_get_tx_data(skb);
 	tx_data->sn = pkt_info->sn;
+
+	/* When the endpoint's TX queue has reached the high-water mark,
+	 * stop the mac80211 hardware queues so that no more frames are
+	 * submitted to the driver, and return -ENOSPC so that the caller
+	 * drops this skb.  The TX work handler drains the queue and wakes
+	 * the mac80211 queues once all endpoints fall below the low-water
+	 * mark (RTW_USB_TX_QUEUE_MAX / 2).
+	 */
+	if (skb_queue_len(&rtwusb->tx_queue[ep]) >= RTW_USB_TX_QUEUE_MAX) {
+		if (!rtwusb->tx_stopped) {
+			int ac;
+
+			for (ac = 0; ac < IEEE80211_NUM_ACS; ac++)
+				ieee80211_stop_queue(rtwdev->hw, ac);
+			rtwusb->tx_stopped = true;
+		}
+		return -ENOSPC;
+	}
 
 	skb_queue_tail(&rtwusb->tx_queue[ep], skb);
 
@@ -775,12 +832,20 @@ static void rtw_usb_read_port_complete(struct urb *urb)
 			skb_queue_tail(&rtwusb->rx_free_queue, skb);
 		} else {
 			skb_put(skb, urb->actual_length);
-			skb_queue_tail(&rtwusb->rx_queue, skb);
+
+			/* When the RX queue is already full, return the
+			 * buffer to the free pool instead of enqueueing.
+			 */
+			if (skb_queue_len(&rtwusb->rx_queue) >= RTW_USB_MAX_RXQ_LEN) {
+				skb_queue_tail(&rtwusb->rx_free_queue, skb);
+			} else {
+				skb_queue_tail(&rtwusb->rx_queue, skb);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
-			queue_work(rtwusb->rxwq, &rtwusb->rx_work);
+				queue_work(rtwusb->rxwq, &rtwusb->rx_work);
 #else
-			tasklet_schedule(&rtwusb->rx_tasklet);
+				tasklet_schedule(&rtwusb->rx_tasklet);
 #endif
+			}
 		}
 		rtw_usb_rx_resubmit(rtwusb, rxcb, GFP_ATOMIC);
 	} else {
@@ -1066,6 +1131,7 @@ static int rtw_usb_init_tx(struct rtw_dev *rtwdev)
 		skb_queue_head_init(&rtwusb->tx_queue[i]);
 
 	INIT_WORK(&rtwusb->tx_work, rtw_usb_tx_handler);
+	rtwusb->tx_stopped = false;
 
 	return 0;
 }

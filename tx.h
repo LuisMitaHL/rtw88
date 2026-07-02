@@ -8,6 +8,7 @@
 #define RTK_TX_MAX_AGG_NUM_MASK		0x1f
 
 #define RTW_TX_PROBE_TIMEOUT		msecs_to_jiffies(500)
+#define RTW_TX_REPORT_QLEN_MAX		4096
 
 struct rtw_tx_desc {
 	__le32 w0;
